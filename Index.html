@@ -1,0 +1,715 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Food Boutique</title>
+    <!-- Load Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Firebase Imports (only core services remain) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getFirestore } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        import { setLogLevel } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+        
+        // Expose Firebase functions globally for use in the main script
+        window.firebase = {
+            initializeApp,
+            getFirestore,
+            setLogLevel
+        };
+    </script>
+
+    <!-- Use Inter font family -->
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #111827; /* Dark background */
+        }
+        /* Mobile Screen Centering/Limiting */
+        #app-container {
+            max-width: 420px; /* Typical large mobile width */
+            margin: 0 auto;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            background-color: #1f2937; /* Slightly lighter inner background */
+            box-shadow: 0 0 30px rgba(0, 0, 0, 0.6);
+            position: relative;
+        }
+        /* Custom scrollbar for categories */
+        #category-bar::-webkit-scrollbar {
+            display: none;
+        }
+        #category-bar {
+            -ms-overflow-style: none;  /* IE and Edge */
+            scrollbar-width: none;  /* Firefox */
+        }
+        /* Style for the receipt */
+        .receipt-line {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 0.25rem;
+        }
+    </style>
+</head>
+<body>
+
+<div id="app-container">
+    <!-- Header (Simplified - no login button) -->
+    <header class="p-4 bg-gray-900 shadow-xl sticky top-0 z-20 rounded-b-xl flex justify-between items-center">
+        <h1 id="header-title" class="text-2xl font-extrabold text-orange-400">Food Boutique</h1>
+        <!-- Removed Auth Button -->
+    </header>
+
+    <!-- Main Content Area -->
+    <main id="content-area" class="flex-grow p-4 overflow-y-auto pb-20">
+        <!-- Content will be injected here (Menu List, Detail, Cart, Tracking) -->
+        <div class="text-center p-8 mt-10 text-white">Loading...</div>
+    </main>
+
+    <!-- Floating Message Box (Alerts) -->
+    <div id="message-box" class="fixed bottom-20 left-1/2 -translate-x-1/2 p-3 bg-green-500 text-white rounded-xl shadow-2xl transition-opacity duration-300 opacity-0 pointer-events-none z-50">
+        Item added to cart!
+    </div>
+
+    <!-- Bottom Navigation -->
+    <nav id="bottom-nav" class="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-gray-900 border-t border-gray-700 shadow-2xl z-20 rounded-t-xl">
+        <div class="flex justify-around items-center h-16">
+            <button onclick="navigate('menu')" id="nav-menu" class="flex flex-col items-center text-orange-400 hover:text-orange-300 transition-colors">
+                <!-- Menu Icon -->
+                <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7"></path></svg>
+                <span class="text-xs">Menu</span>
+            </button>
+            <button onclick="navigate('cart')" id="nav-cart" class="flex flex-col items-center text-gray-400 hover:text-orange-300 transition-colors relative">
+                <!-- Cart Icon -->
+                <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 3h2l.4 2M7 13h10l4-8H5.4M7 13L5.4 5M7 13l-2.293 2.293c-.63.63-.184 1.707.707 1.707H17m0 0a2 2 0 100 4 2 2 0 000-4zm-8 2a2 2 0 11-4 0 2 2 0 014 0z"></path></svg>
+                <span class="text-xs">Cart</span>
+                <span id="cart-count" class="absolute top-0 right-1 bg-red-600 text-white text-xs font-bold w-5 h-5 flex items-center justify-center rounded-full opacity-0 transition-opacity duration-200"></span>
+            </button>
+            <button onclick="navigate('track')" id="nav-track" class="flex flex-col items-center text-gray-400 hover:text-orange-300 transition-colors">
+                <!-- Tracking Icon -->
+                <svg class="w-7 h-7" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19V6l2-2 2 2v13M9 19l3-3m-3 3l3 3m5-13h2a1 1 0 011 1v2a1 1 0 01-1 1h-2a1 1 0 01-1-1v-2a1 1 0 011-1z"></path></svg>
+                <span class="text-xs">Track</span>
+            </button>
+        </div>
+    </nav>
+</div>
+
+<script type="module">
+    // Deconstruct Firebase functions for easier use after import
+    const { 
+        initializeApp, getFirestore, setLogLevel
+    } = window.firebase;
+
+    // --- Firebase Initialization & Global Variables ---
+    const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+
+    let app;
+    let db;
+    // Set a default user ID now that Firebase Auth is removed
+    const userId = 'anonymous-user-' + Math.random().toString(36).substring(2, 9);
+
+
+    // --- Application State Management ---
+
+    const mockFoods = [
+        { id: 1, title: "Classic Omelette", price: 10.50, category: "Breakfast", description: "Fluffy three-egg omelette with herbs and your choice of cheese.", img: "https://placehold.co/600x400/fcd34d/1f2937?text=Fluffy+Omelette" },
+        { id: 5, title: "Gourmet Beef Burger", price: 15.00, category: "Heavy Foods", description: "Quarter-pound beef patty, cheddar, crispy lettuce, tomato, and special truffle mayo.", img: "https://placehold.co/600x400/dc2626/ffffff?text=Premium+Burger" },
+        { id: 19, title: "Jollof Rice w/ Chicken", price: 35.00, category: "Heavy Foods", description: "Classic West African rice dish, slow-cooked in a tomato base, served with grilled chicken.", img: "https://placehold.co/600x400/ef4444/ffffff?text=Jollof+and+Chicken" },
+        { id: 26, title: "Hausa Koko & Bofrot Combo", price: 12.00, category: "Breakfast", description: "Spicy millet porridge served with three soft, sweet fried dough balls (Puff Puff).", img: "https://placehold.co/600x400/84cc16/1f2937?text=Koko+&+Bofrot" },
+        { id: 12, title: "Iced Caramel Macchiato", price: 4.50, category: "Drinks", description: "Espresso with vanilla syrup, milk, and caramel drizzle over ice.", img: "https://placehold.co/600x400/5eead4/1f2937?text=Iced+Macchiato" },
+        { id: 25, title: "Strawberry Cheesecake", price: 12.00, category: "Dessert", description: "Creamy cheesecake with a graham cracker crust and fresh strawberry topping.", img: "https://placehold.co/600x400/ec4899/ffffff?text=Strawberry+Cheesecake" },
+    ];
+
+    const foodCategories = ["All", "Breakfast", "Dessert", "Drinks", "Heavy Foods"];
+    
+    // Convert cart items from local storage string to Map for easier manipulation
+    function getCartFromStorage() {
+        try {
+            const storedCart = JSON.parse(localStorage.getItem('foodAppCart') || '{}');
+            return new Map(Object.entries(storedCart).map(([id, quantity]) => [parseInt(id), quantity]));
+        } catch (e) {
+            console.error("Error loading cart from localStorage", e);
+            return new Map();
+        }
+    }
+
+    // Global App State
+    let appState = {
+        view: 'loading', // Will quickly switch to 'menu'
+        selectedFoodId: null,
+        currentCategory: "All",
+        cartItems: getCartFromStorage(), // Map stores { foodId: quantity }
+        orderStatus: null, // { orderId: 'ABC123', stage: 'Preparing', receipt: {} }
+    };
+
+    const contentArea = document.getElementById('content-area');
+    const headerTitle = document.getElementById('header-title');
+    const messageBox = document.getElementById('message-box');
+    const cartCountElement = document.getElementById('cart-count');
+    const bottomNav = document.getElementById('bottom-nav');
+
+    // --- Utility Functions ---
+
+    function getFoodById(id) {
+        return mockFoods.find(e => e.id === id);
+    }
+
+    function updateCartCount() {
+        let totalCount = 0;
+        appState.cartItems.forEach(quantity => {
+            totalCount += quantity;
+        });
+
+        cartCountElement.textContent = totalCount;
+        if (totalCount > 0) {
+            cartCountElement.classList.replace('opacity-0', 'opacity-100');
+        } else {
+            cartCountElement.classList.replace('opacity-100', 'opacity-0');
+        }
+    }
+
+    function showMessage(message, isSuccess = true) {
+        messageBox.textContent = message;
+        messageBox.className = `fixed bottom-20 left-1/2 -translate-x-1/2 p-3 ${isSuccess ? 'bg-green-500' : 'bg-red-500'} text-white rounded-xl shadow-2xl transition-opacity duration-300 opacity-100 z-50`;
+
+        setTimeout(() => {
+            messageBox.classList.replace('opacity-100', 'opacity-0');
+            messageBox.classList.add('pointer-events-none');
+        }, 3000);
+        messageBox.classList.remove('pointer-events-none');
+    }
+
+    function saveCartToStorage() {
+        const cartObject = Object.fromEntries(appState.cartItems);
+        localStorage.setItem('foodAppCart', JSON.stringify(cartObject));
+        updateCartCount();
+    }
+    
+    // --- Actions ---
+
+    function addToCart(foodId, quantity = 1) {
+        const currentQty = appState.cartItems.get(foodId) || 0;
+        const newQty = currentQty + quantity;
+
+        if (newQty > 0) {
+            appState.cartItems.set(foodId, newQty);
+            showMessage("Added to cart!");
+        } else if (newQty <= 0) {
+             appState.cartItems.delete(foodId);
+             showMessage("Item removed.", false);
+        }
+        
+        saveCartToStorage();
+        if (appState.view === 'cart' || appState.view === 'detail') {
+            renderApp();
+        }
+    }
+    
+    function setCartItemQuantity(foodId, newQty) {
+        if (newQty > 0) {
+            appState.cartItems.set(foodId, newQty);
+        } else {
+            appState.cartItems.delete(foodId);
+        }
+        saveCartToStorage();
+        if (appState.view === 'cart') {
+            renderApp();
+        }
+    }
+
+    function setCategory(category) {
+        appState.currentCategory = category;
+        renderApp();
+    }
+    
+    /**
+     * Generates the receipt data and simulates the checkout process.
+     */
+    function checkout() {
+        if (appState.cartItems.size === 0) {
+            showMessage("Your cart is empty. Please add items before checking out.", false);
+            return;
+        }
+
+        // 1. Calculate Receipt Details
+        const cartItemsArray = Array.from(appState.cartItems.entries())
+            .map(([id, quantity]) => ({ food: getFoodById(id), quantity }));
+        
+        const subtotal = cartItemsArray.reduce((sum, item) => sum + (item.food.price * item.quantity), 0);
+        const deliveryFee = 5.00; // Fixed delivery fee
+        const total = subtotal + deliveryFee;
+
+        const receipt = {
+            items: cartItemsArray.map(item => ({
+                title: item.food.title,
+                qty: item.quantity,
+                price: item.food.price,
+                lineTotal: item.food.price * item.quantity,
+            })),
+            subtotal,
+            deliveryFee,
+            total,
+            date: new Date().toLocaleDateString(),
+            time: new Date().toLocaleTimeString(),
+        };
+
+        // 2. Simulate order creation
+        const orderId = Math.random().toString(36).substring(2, 8).toUpperCase();
+        appState.orderStatus = {
+            orderId: orderId,
+            stage: 'Order Placed',
+            receipt: receipt, // Store the receipt data
+            history: [
+                { time: new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }), status: 'Order Placed' }
+            ]
+        };
+        
+        // 3. Clear the cart
+        appState.cartItems.clear();
+        saveCartToStorage();
+
+        // 4. Start tracking simulation
+        startTrackingSimulation();
+
+        // 5. Navigate to the tracking view
+        navigate('track');
+    }
+
+    /**
+     * Simulates the real-time order tracking updates with fixed delays.
+     */
+    function startTrackingSimulation() {
+        if (!appState.orderStatus) return;
+
+        // Delays between transitions (in milliseconds)
+        const TRANSITION_DELAYS = [
+            6000, // 6 seconds: Time spent in 'Preparing Food' before moving to 'Out for Delivery' (Shortened for demo)
+            9000  // 9 seconds: Time spent in 'Out for Delivery' before moving to 'Delivered' (Shortened for demo)
+        ];
+        
+        const stages = ['Preparing Food', 'Out for Delivery', 'Delivered'];
+        let currentStageIndex = 0;
+
+        function updateStatus() {
+            if (currentStageIndex < stages.length) {
+                const newStage = stages[currentStageIndex];
+                const now = new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                
+                appState.orderStatus.stage = newStage;
+                appState.orderStatus.history.push({ time: now, status: newStage });
+                
+                // Only re-render if the user is currently on the tracking screen
+                if (appState.view === 'track') {
+                    renderApp();
+                }
+
+                if (newStage !== 'Delivered') {
+                    const delay = TRANSITION_DELAYS[currentStageIndex];
+                    currentStageIndex++;
+                    setTimeout(updateStatus, delay);
+                }
+            }
+        }
+        
+        // Start the first update after 3 seconds: 'Order Placed' -> 'Preparing Food'
+        setTimeout(updateStatus, 3000); 
+    }
+
+    function navigate(newView, foodId = null) {
+        if (newView === 'detail' && foodId === null) {
+            newView = 'menu';
+        }
+
+        appState.view = newView;
+        appState.selectedFoodId = foodId;
+        renderApp();
+    }
+
+    // --- View Rendering ---
+
+    /**
+     * Renders the receipt details.
+     */
+    function renderReceipt(receipt) {
+        if (!receipt) return '';
+
+        return `
+            <div class="bg-gray-900 p-5 rounded-xl shadow-inner mt-6 border border-gray-700">
+                <h3 class="text-2xl font-extrabold text-green-400 text-center mb-4 border-b border-gray-700 pb-2">Order Receipt</h3>
+                
+                <div class="text-gray-400 text-sm mb-4">
+                    <p class="receipt-line"><span>Date:</span> <span>${receipt.date}</span></p>
+                    <p class="receipt-line"><span>Time:</span> <span>${receipt.time}</span></p>
+                </div>
+
+                <div class="space-y-2 mb-4">
+                    ${receipt.items.map(item => `
+                        <div class="receipt-line text-sm text-white">
+                            <span>${item.qty} x ${item.title}</span>
+                            <span>GH¢${item.lineTotal.toFixed(2)}</span>
+                        </div>
+                    `).join('')}
+                </div>
+
+                <div class="border-t border-dashed border-gray-600 pt-4 space-y-2">
+                    <div class="receipt-line text-gray-300">
+                        <span>Subtotal:</span>
+                        <span>GH¢${receipt.subtotal.toFixed(2)}</span>
+                    </div>
+                    <div class="receipt-line text-gray-300">
+                        <span>Delivery Fee:</span>
+                        <span>GH¢${receipt.deliveryFee.toFixed(2)}</span>
+                    </div>
+                    <div class="receipt-line text-2xl font-extrabold text-orange-400 pt-2 border-t border-gray-700">
+                        <span>TOTAL PAID:</span>
+                        <span>GH¢${receipt.total.toFixed(2)}</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    }
+
+
+    /**
+     * Renders the order tracking view.
+     */
+    function renderTrackView() {
+        headerTitle.textContent = 'Order Tracking';
+
+        if (!appState.orderStatus) {
+            contentArea.innerHTML = `
+                <div class="text-center p-8 mt-10">
+                    <p class="text-gray-400 text-lg">No active order to track.</p>
+                    <button onclick="navigate('menu')" class="mt-4 py-2 px-6 bg-orange-600 text-white font-bold rounded-lg hover:bg-orange-500">
+                        Start an Order
+                    </button>
+                </div>
+            `;
+            return;
+        }
+
+        const { orderId, stage, history, receipt } = appState.orderStatus;
+        const isDelivered = stage === 'Delivered';
+
+        const stagesFull = ['Order Placed', 'Preparing Food', 'Out for Delivery', 'Delivered'];
+        const stageIndex = stagesFull.indexOf(stage);
+
+        contentArea.innerHTML = `
+            <div class="bg-gray-800 p-6 rounded-xl shadow-2xl space-y-6">
+                <div class="text-center">
+                    <p class="text-gray-400 text-sm">ORDER ID</p>
+                    <p class="text-2xl font-bold text-orange-400">${orderId}</p>
+                    <p class="mt-4 text-xl font-bold ${isDelivered ? 'text-green-400' : 'text-white'}">Status: ${stage}</p>
+                </div>
+
+                <!-- Visual Tracker Timeline -->
+                <div class="relative pt-10">
+                    <div class="absolute inset-y-0 left-5 w-0.5 bg-gray-700"></div>
+                    ${stagesFull.map((s, index) => {
+                        const isCompleted = index <= stageIndex;
+                        const iconColor = isCompleted ? 'bg-green-500' : 'bg-gray-600';
+                        const textColor = isCompleted ? 'text-white' : 'text-gray-400';
+                        const historyItem = history.find(h => h.status === s);
+                        const time = historyItem ? historyItem.time : '--:--';
+                        
+                        let iconPath;
+                        if (s === 'Order Placed') iconPath = 'M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2';
+                        else if (s === 'Preparing Food') iconPath = 'M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z';
+                        else if (s === 'Out for Delivery') iconPath = 'M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.828 0l-4.244-4.243a8 8 0 1111.314 0z';
+                        else if (s === 'Delivered') iconPath = 'M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z';
+
+                        return `
+                            <div class="relative flex items-start mb-8">
+                                <div class="flex items-center justify-center w-10 h-10 rounded-full ${iconColor} z-10 flex-shrink-0">
+                                    <svg class="w-6 h-6 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="${iconPath}"></path></svg>
+                                </div>
+                                <div class="ml-4 pt-1">
+                                    <p class="font-bold ${textColor}">${s}</p>
+                                    <p class="text-sm ${isCompleted ? 'text-gray-300' : 'text-gray-500'}">${time}</p>
+                                </div>
+                            </div>
+                        `;
+                    }).join('')}
+                </div>
+                
+                ${isDelivered ? `
+                    <p class="text-center text-green-500 font-bold text-xl mt-6">🎉 Order Delivered! Enjoy your meal!</p>
+                    ${renderReceipt(receipt)}
+                    <button onclick="appState.orderStatus=null; navigate('menu');" class="w-full py-3 bg-indigo-600 text-white font-bold rounded-xl mt-4 hover:bg-indigo-700">
+                        Start New Order
+                    </button>
+                ` : ''}
+            </div>
+        `;
+    }
+
+
+    // --- Render Functions (renderFoodCard, renderCategoryBar, renderMenuView, renderFoodDetail, renderCartView) ---
+    
+    function renderFoodCard(food) {
+        const inCartQty = appState.cartItems.get(food.id) || 0;
+        
+        return `
+            <div class="bg-gray-800 p-3 rounded-xl shadow-lg mb-4 flex items-center space-x-4">
+                <img src="${food.img}" alt="${food.title}" onerror="this.onerror=null;this.src='https://placehold.co/100x100/4b5563/ffffff?text=Food'" 
+                     class="w-20 h-20 object-cover rounded-lg flex-shrink-0">
+
+                <!-- Food Info -->
+                <div class="flex-grow">
+                    <h3 class="text-lg font-semibold text-white truncate">${food.title}</h3>
+                    <p class="text-sm text-gray-400">${food.category}</p>
+                    <p class="text-xl font-bold text-orange-400 mt-1">GH¢${food.price.toFixed(2)}</p>
+                </div>
+
+                <!-- Action Buttons -->
+                <div class="flex flex-col items-center space-y-2 flex-shrink-0">
+                    <button onclick="navigate('detail', ${food.id})" class="text-sm text-indigo-400 font-medium hover:text-indigo-300">
+                        View
+                    </button>
+                    <button onclick="addToCart(${food.id})" class="w-10 h-10 flex items-center justify-center bg-orange-600 text-white rounded-full transition duration-150 hover:bg-orange-500 active:scale-95">
+                        <!-- Plus Icon -->
+                        ${inCartQty > 0 ? `<span class="text-sm">${inCartQty}</span>` : `<svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>`}
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    function renderCategoryBar() {
+        return `
+            <div id="category-bar" class="flex overflow-x-auto space-x-3 pb-3 mb-4 sticky top-16 bg-gray-900/90 backdrop-blur-sm z-10 p-2 -mx-4">
+                ${foodCategories.map(cat => {
+                    const isActive = appState.currentCategory === cat;
+                    const baseClasses = "py-2 px-4 rounded-full text-sm font-medium transition-colors duration-200 flex-shrink-0";
+                    const activeClasses = "bg-orange-600 text-white shadow-md";
+                    const inactiveClasses = "bg-gray-700 text-gray-300 hover:bg-gray-600";
+                    return `<button onclick="setCategory('${cat}')" class="${baseClasses} ${isActive ? activeClasses : inactiveClasses}">${cat}</button>`;
+                }).join('')}
+            </div>
+        `;
+    }
+
+    function renderMenuView() {
+        headerTitle.textContent = 'Food Boutique';
+
+        const filteredFoods = appState.currentCategory === "All"
+            ? mockFoods
+            : mockFoods.filter(f => f.category === appState.currentCategory);
+
+        contentArea.innerHTML = `
+            ${renderCategoryBar()}
+            <div class="mt-2">
+                ${filteredFoods.map(renderFoodCard).join('')}
+                ${filteredFoods.length === 0 ? `
+                    <div class="text-center p-8 mt-10">
+                        <p class="text-gray-400 text-lg">No items found in the **${appState.currentCategory}** category.</p>
+                        <p class="text-gray-500 mt-2">Try another filter or view All dishes.</p>
+                    </div>
+                ` : ''}
+            </div>
+        `;
+    }
+
+    function renderFoodDetail(food) {
+        if (!food) {
+            navigate('menu');
+            return;
+        }
+
+        const inCartQty = appState.cartItems.get(food.id) || 0;
+        const buttonText = inCartQty > 0 ? `Add More (${inCartQty} in Cart)` : 'Add to Cart';
+
+        // Set header to show back button and food title
+        headerTitle.innerHTML = `<button onclick="navigate('menu')" class="text-orange-400 mr-2">&larr;</button> ${food.title}`;
+        
+        contentArea.innerHTML = `
+            <div class="bg-gray-800 rounded-xl shadow-2xl overflow-hidden mb-6">
+                <!-- Image -->
+                <img src="${food.img}" alt="${food.title}" onerror="this.onerror=null;this.src='https://placehold.co/600x400/4b5563/ffffff?text=Food+Image'" 
+                     class="w-full h-64 object-cover">
+
+                <div class="p-6">
+                    <h2 class="text-3xl font-bold text-white mb-2">${food.title}</h2>
+                    <p class="text-xl font-medium text-orange-400 mb-4">GH¢${food.price.toFixed(2)}</p>
+
+                    <!-- Description -->
+                    <h3 class="text-xl font-semibold text-white mt-4 mb-2">Description</h3>
+                    <p class="text-gray-400 leading-relaxed border-b border-gray-700 pb-4 mb-4">${food.description}</p>
+                    
+                    <!-- Category Info -->
+                    <div class="flex justify-between items-center">
+                        <p class="text-gray-500 text-sm">Category</p>
+                        <span class="text-sm font-semibold text-gray-300">${food.category}</span>
+                    </div>
+                </div>
+
+                <!-- Action Button -->
+                <div class="p-6 pt-0">
+                    <button onclick="addToCart(${food.id})"
+                        class="w-full py-3 bg-orange-600 hover:bg-orange-700 text-white font-bold rounded-xl transition duration-200 shadow-lg transform active:scale-[0.98] flex items-center justify-center space-x-2">
+                        <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path></svg>
+                        <span>${buttonText}</span>
+                    </button>
+                </div>
+            </div>
+        `;
+    }
+
+    function renderCartView() {
+        headerTitle.textContent = 'Your Cart';
+
+        const cartItemsArray = Array.from(appState.cartItems.entries())
+            .map(([id, quantity]) => ({ food: getFoodById(id), quantity }))
+            .filter(item => item.food); // Filter out items not found
+
+        let subtotal = 0;
+        
+        if (cartItemsArray.length > 0) {
+            subtotal = cartItemsArray.reduce((sum, item) => sum + (item.food.price * item.quantity), 0);
+        }
+
+        const deliveryFee = subtotal > 0 ? 5.00 : 0.00;
+        const total = subtotal + deliveryFee;
+
+        contentArea.innerHTML = `
+            ${cartItemsArray.length === 0 ? `
+                <div class="text-center p-8 mt-10">
+                    <p class="text-gray-400 text-lg">Your cart is empty.</p>
+                    <p class="text-gray-500 mt-2">Find something delicious on the **Menu** tab!</p>
+                </div>
+            ` : `
+                <!-- Cart Items List -->
+                <div class="space-y-4 mb-6">
+                    ${cartItemsArray.map(item => `
+                        <div class="flex items-center bg-gray-800 p-3 rounded-xl shadow-md">
+                            <img src="${item.food.img}" alt="${item.food.title}" onerror="this.onerror=null;this.src='https://placehold.co/60x60/4b5563/ffffff?text=Item'" 
+                                 class="w-16 h-16 object-cover rounded-md mr-4">
+                            
+                            <div class="flex-grow">
+                                <p class="text-white font-semibold">${item.food.title}</p>
+                                <p class="text-orange-400 font-bold">GH¢${item.food.price.toFixed(2)}</p>
+                            </div>
+
+                            <!-- Quantity Controls -->
+                            <div class="flex items-center space-x-2 text-white">
+                                <button onclick="setCartItemQuantity(${item.food.id}, ${item.quantity - 1})" 
+                                    class="w-7 h-7 bg-gray-700 rounded-full hover:bg-gray-600 transition duration-150 active:scale-95 text-xl leading-none flex items-center justify-center p-0.5">
+                                    &minus;
+                                </button>
+                                <span class="font-bold w-4 text-center">${item.quantity}</span>
+                                <button onclick="setCartItemQuantity(${item.food.id}, ${item.quantity + 1})" 
+                                    class="w-7 h-7 bg-orange-600 rounded-full hover:bg-orange-500 transition duration-150 active:scale-95 text-xl leading-none flex items-center justify-center p-0.5">
+                                    &plus;
+                                </button>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+
+                <!-- Summary -->
+                <div class="bg-gray-800 p-5 rounded-xl shadow-lg space-y-3 mb-6">
+                    <h3 class="text-xl font-bold text-white border-b border-gray-700 pb-2">Order Summary</h3>
+                    <div class="flex justify-between text-gray-300">
+                        <span>Subtotal</span>
+                        <span>GH¢${subtotal.toFixed(2)}</span>
+                    </div>
+                    <div class="flex justify-between text-gray-300">
+                        <span>Delivery Fee</span>
+                        <span>GH¢${deliveryFee.toFixed(2)}</span>
+                    </div>
+                    <div class="flex justify-between text-2xl font-extrabold text-orange-400 pt-2 border-t border-gray-700">
+                        <span>Total</span>
+                        <span>GH¢${total.toFixed(2)}</span>
+                    </div>
+                </div>
+
+                <!-- Checkout Button -->
+                <div class="pb-4">
+                    <button onclick="checkout()"
+                        class="w-full py-4 bg-green-600 hover:bg-green-700 text-white font-bold text-lg rounded-xl transition duration-200 shadow-lg transform active:scale-[0.98]">
+                        Secure Checkout & Pay (GH¢${total.toFixed(2)})
+                    </button>
+                </div>
+            `}
+        `;
+    }
+    // END: Reused Render Functions
+
+
+    /**
+     * Main rendering function based on appState.
+     */
+    function renderApp() {
+        // Reset navigation active state
+        const navButtons = document.querySelectorAll('#bottom-nav button');
+        navButtons.forEach(nav => {
+            nav.classList.remove('text-orange-400');
+            nav.classList.add('text-gray-400');
+        });
+
+        // Determine which view to render
+        switch (appState.view) {
+            case 'menu':
+                document.getElementById('nav-menu').classList.replace('text-gray-400', 'text-orange-400');
+                renderMenuView();
+                break;
+            case 'cart':
+                document.getElementById('nav-cart').classList.replace('text-gray-400', 'text-orange-400');
+                renderCartView();
+                break;
+            case 'detail':
+                const food = getFoodById(appState.selectedFoodId);
+                renderFoodDetail(food);
+                break;
+            case 'track':
+                document.getElementById('nav-track').classList.replace('text-gray-400', 'text-orange-400');
+                renderTrackView();
+                break;
+            default:
+                renderMenuView();
+        }
+        
+        updateCartCount();
+        contentArea.scrollTop = 0; // Scroll to top on navigation
+    }
+
+    // --- Core Initialization ---
+
+    async function initializeFirebaseAndApp() {
+        try {
+            if (Object.keys(firebaseConfig).length > 0) {
+                 app = initializeApp(firebaseConfig);
+                 db = getFirestore(app);
+                 setLogLevel('Debug'); // Enable logging for debugging
+            } else {
+                console.warn("Firebase config not available. Running in local mode.");
+            }
+        
+        } catch (error) {
+            console.error("Firebase Initialization Error:", error);
+        }
+        
+        // Always start the app on the menu view immediately
+        appState.view = 'menu';
+        renderApp();
+    }
+    
+    // Attach global functions to window for access from inline HTML event handlers
+    window.navigate = navigate;
+    window.addToCart = addToCart;
+    window.setCartItemQuantity = setCartItemQuantity;
+    window.setCategory = setCategory;
+    window.checkout = checkout;
+    
+    // Start the initialization process
+    window.onload = initializeFirebaseAndApp;
+
+</script>
+
+</body>
+</html>
